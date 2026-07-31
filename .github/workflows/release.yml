@@ -122,6 +122,11 @@ jobs:
       sha_x86_64_linux: ${{ steps.collect.outputs.sha_x86_64_linux }}
       sha_aarch64_linux: ${{ steps.collect.outputs.sha_aarch64_linux }}
     steps:
+      # Full history so the tag's annotation can be read for the release body.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -150,12 +155,38 @@ jobs:
             echo "$target $sha"
           done
 
+      # Auto-generated notes only list merged PRs, which says nothing on a first
+      # release. The tag's own annotation carries the actual summary.
+      - name: compose release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.collect.outputs.version }}"
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME"
+            cat <<EOF
+
+          ## Install
+
+          \`\`\`bash
+          brew install jtprogru/tap/jlic
+          cargo install jlic --version $version
+          \`\`\`
+
+          Archives below are \`.tar.gz\` per target, each with its \`.sha256\` sum.
+          EOF
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.tar.gz
             dist/*.sha256
+          body: ${{ steps.notes.outputs.body }}
           generate_release_notes: true
           draft: false
           # any tag like v1.2.3-rc1 is auto-marked as pre-release
