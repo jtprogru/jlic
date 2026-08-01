@@ -89,6 +89,15 @@ update-templates: ## Refetch license texts and SPDX references
 publish-dry: ## Verify the crates.io package without publishing
 	$(CARGO) publish --dry-run --locked
 
+# --cleanup=verbatim matters: git otherwise treats the markdown headings in the
+# notes as comments and strips them, and the annotation is what becomes the
+# body of the GitHub release.
+.PHONY: tag
+tag: ## Create the annotated release tag: make tag NOTES=notes.md
+	@test -n "$(NOTES)" || { echo "usage: make tag NOTES=notes.md"; exit 1; }
+	git tag -a "v$(VERSION)" --cleanup=verbatim -F "$(NOTES)"
+	@echo "tag v$(VERSION) created — push it with: git push origin v$(VERSION)"
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	$(CARGO) clean
