@@ -5,6 +5,7 @@ use std::process::Command;
 use time::OffsetDateTime;
 
 use crate::error::{Error, Result};
+use crate::template::OPEN as OPEN_MARKER;
 
 /// Environment variables that take precedence over git config.
 const ENV_NAME: &str = "JLIC_NAME";
@@ -33,13 +34,17 @@ impl Context {
             name.map(str::to_string),
             env_var(ENV_NAME),
             git_config("user.name"),
-        ]);
+        ])
+        .map(|v| validate_field("name", v))
+        .transpose()?;
 
         let email = first_non_empty([
             email.map(str::to_string),
             env_var(ENV_EMAIL),
             git_config("user.email"),
-        ]);
+        ])
+        .map(|v| validate_field("email", v))
+        .transpose()?;
 
         Ok(Self { year, name, email })
     }
@@ -78,6 +83,27 @@ fn git_config(key: &str) -> Option<String> {
     let value = String::from_utf8(output.stdout).ok()?;
     let value = value.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+/// Rejects values that must not reach a license text verbatim.
+///
+/// The holder is substituted into the copyright line as-is, so a value taken
+/// from project metadata by a script or an agent must not be able to append
+/// lines of its own or smuggle in a template marker.
+fn validate_field(field: &'static str, value: String) -> Result<String> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidHolderField {
+            field,
+            reason: "line breaks and control characters are not allowed",
+        });
+    }
+    if value.contains(OPEN_MARKER) {
+        return Err(Error::InvalidHolderField {
+            field,
+            reason: "template markers are not allowed",
+        });
+    }
+    Ok(value)
 }
 
 fn current_year() -> String {
@@ -147,6 +173,23 @@ mod tests {
         assert_eq!(ctx.year, "1999");
         assert_eq!(ctx.name.as_deref(), Some("Someone"));
         assert_eq!(ctx.email.as_deref(), Some("a@b.c"));
+    }
+
+    #[test]
+    fn rejects_values_that_would_inject_into_the_license_text() {
+        for bad in ["Acme\n\nAll rights reserved.", "Acme\rInc", "{{holder}}"] {
+            assert!(
+                matches!(
+                    Context::resolve(Some("2026"), Some(bad), None),
+                    Err(Error::InvalidHolderField { field: "name", .. })
+                ),
+                "should be rejected: {bad:?}"
+            );
+        }
+        assert!(matches!(
+            Context::resolve(Some("2026"), Some("Acme"), Some("a@b.c\nX")),
+            Err(Error::InvalidHolderField { field: "email", .. })
+        ));
     }
 
     #[test]
