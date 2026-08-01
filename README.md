@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/jlic.svg)](https://crates.io/crates/jlic)
 [![docs.rs](https://img.shields.io/docsrs/jlic)](https://docs.rs/jlic)
 [![downloads](https://img.shields.io/crates/d/jlic.svg)](https://crates.io/crates/jlic)
-[![MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+[![MSRV](https://img.shields.io/badge/rust-1.97%2B-orange.svg)](https://www.rust-lang.org)
 [![license](https://img.shields.io/crates/l/jlic.svg)](LICENSE)
 
 A LICENSE file generator for open source projects. Seven popular license texts are embedded in the binary; the copyright holder and year are filled in automatically from your git config.

@@ -2,7 +2,7 @@
 name = "jlic"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.97"
 description = "Generate LICENSE files for open source projects: MIT, Apache-2.0, GPL-3.0-or-later, BSD-3-Clause, MPL-2.0, ISC, WTFPL"
 authors = ["Mikhail Savin <jtprogru@gmail.com>"]
 license = "MIT"
