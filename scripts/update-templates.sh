@@ -63,5 +63,11 @@ for entry in "${LICENSES[@]}"; do
 		"$target" "$(wc -c <"$target_file" | tr -d ' ')" "$placeholders"
 done
 
+# Pin the digests of the reference texts. CI re-checks them, so a silently
+# changed upstream text cannot slip in without a visible line in the diff.
+(cd assets/spdx && shasum -a 256 -- *.txt >CHECKSUMS.sha256)
+
 echo
 echo "Done. Review the result: git diff assets/ && make test"
+echo "assets/spdx/CHECKSUMS.sha256 was regenerated — every changed digest must"
+echo "be explained by a change you can see in the diff of the text next to it."
