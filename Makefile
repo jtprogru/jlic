@@ -42,7 +42,11 @@ check: fmt-check lint test ## Full check, same as CI
 
 .PHONY: audit
 audit: ## Scan dependencies for known vulnerabilities
-	$(CARGO) audit
+	@command -v cargo-audit >/dev/null 2>&1 || { \
+		echo "cargo-audit is not installed: cargo install --locked cargo-audit"; \
+		exit 1; \
+	}
+	$(CARGO) audit --deny warnings
 
 .PHONY: doc
 doc: ## Build and open the API documentation
