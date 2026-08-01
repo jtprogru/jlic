@@ -5,8 +5,9 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+# Permissions are granted per job: only `release` needs to write to this
+# repository, and `homebrew` works exclusively against the tap via a PAT.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +18,8 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: build (${{ matrix.target }})
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -35,13 +38,13 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -67,16 +70,17 @@ jobs:
 
       - name: strip + archive
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          target="${{ matrix.target }}"
           tag="${GITHUB_REF_NAME}"
-          archive="jlic-${tag}-${target}.tar.gz"
-          bin="target/${target}/release/jlic"
+          archive="jlic-${tag}-${TARGET}.tar.gz"
+          bin="target/${TARGET}/release/jlic"
 
           # Best-effort strip — only meaningful on Linux GNU; macOS already
           # strips via the release profile config.
-          if [[ "$target" == *linux* ]]; then
+          if [[ "$TARGET" == *linux* ]]; then
             strip "$bin" || true
           fi
 
@@ -86,7 +90,7 @@ jobs:
           staging="staging"
           mkdir -p "$staging"
           cp "$bin" "$staging/"
-          if [[ "$target" != "x86_64-apple-darwin" ]]; then
+          if [[ "$TARGET" != "x86_64-apple-darwin" ]]; then
             mkdir -p "$staging/completions" "$staging/man"
             for sh in bash zsh fish; do
               "$bin" completions "$sh" > "$staging/completions/jlic.$sh"
@@ -99,7 +103,7 @@ jobs:
 
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.target }}
           path: |
@@ -115,6 +119,8 @@ jobs:
     name: github release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.collect.outputs.version }}
       sha_aarch64_darwin: ${{ steps.collect.outputs.sha_aarch64_darwin }}
@@ -123,11 +129,11 @@ jobs:
       sha_aarch64_linux: ${{ steps.collect.outputs.sha_aarch64_linux }}
     steps:
       # Full history so the tag's annotation can be read for the release body.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist
           merge-multiple: true
@@ -157,14 +163,20 @@ jobs:
 
       # Auto-generated notes only list merged PRs, which says nothing on a first
       # release. The tag's own annotation carries the actual summary.
+      #
+      # The heredoc delimiter is randomised: it is spliced around text that
+      # comes from the tag annotation, and a fixed marker could be reproduced
+      # there to close the block early and forge further step outputs.
       - name: compose release notes
         id: notes
         shell: bash
+        env:
+          VERSION: ${{ steps.collect.outputs.version }}
         run: |
           set -euo pipefail
-          version="${{ steps.collect.outputs.version }}"
+          delim="RELEASE_NOTES_$(openssl rand -hex 16)"
           {
-            echo 'body<<RELEASE_NOTES_EOF'
+            echo "body<<$delim"
             git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME"
             cat <<EOF
 
@@ -172,16 +184,16 @@ jobs:
 
           \`\`\`bash
           brew install jtprogru/tap/jlic
-          cargo install jlic --version $version
+          cargo install jlic --version $VERSION
           \`\`\`
 
           Archives below are \`.tar.gz\` per target, each with its \`.sha256\` sum.
           EOF
-            echo 'RELEASE_NOTES_EOF'
+            echo "$delim"
           } >> "$GITHUB_OUTPUT"
 
       - name: create GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           files: |
             dist/*.tar.gz
@@ -201,73 +213,52 @@ jobs:
     # Don't push to the tap for pre-release tags — they shouldn't ship to users.
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
+    # Read-only here: the tap is written to with a PAT, not with GITHUB_TOKEN.
+    permissions:
+      contents: read
     steps:
+      - name: checkout jlic
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: jlic
+          persist-credentials: false
+
       - name: checkout homebrew-tap
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: jtprogru/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
+      # Every value below ends up inside a Ruby file that runs on the machine of
+      # anyone doing `brew install`, so each one is checked against its expected
+      # shape before substitution: a stray `#{...}` would be code execution.
       - name: render Formula/jlic.rb
         env:
-          VERSION:            ${{ needs.release.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
           SHA_AARCH64_DARWIN: ${{ needs.release.outputs.sha_aarch64_darwin }}
-          SHA_X86_64_DARWIN:  ${{ needs.release.outputs.sha_x86_64_darwin }}
-          SHA_X86_64_LINUX:   ${{ needs.release.outputs.sha_x86_64_linux }}
-          SHA_AARCH64_LINUX:  ${{ needs.release.outputs.sha_aarch64_linux }}
+          SHA_X86_64_DARWIN: ${{ needs.release.outputs.sha_x86_64_darwin }}
+          SHA_X86_64_LINUX: ${{ needs.release.outputs.sha_x86_64_linux }}
+          SHA_AARCH64_LINUX: ${{ needs.release.outputs.sha_aarch64_linux }}
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::unexpected version: $VERSION"
+            exit 1
+          fi
+          for sha in "$SHA_AARCH64_DARWIN" "$SHA_X86_64_DARWIN" \
+                     "$SHA_X86_64_LINUX" "$SHA_AARCH64_LINUX"; do
+            if [[ ! "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::unexpected sha256: $sha"
+              exit 1
+            fi
+          done
+
           mkdir -p homebrew-tap/Formula
-          cat > homebrew-tap/Formula/jlic.rb <<EOF
-          # typed: false
-          # frozen_string_literal: true
-
-          # This file is generated by .github/workflows/release.yml in
-          # jtprogru/jlic. Do not edit by hand.
-          class Jlic < Formula
-            desc "Generate LICENSE files for open source projects"
-            homepage "https://github.com/jtprogru/jlic"
-            version "${VERSION}"
-            license "MIT"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/jtprogru/jlic/releases/download/v${VERSION}/jlic-v${VERSION}-aarch64-apple-darwin.tar.gz"
-                sha256 "${SHA_AARCH64_DARWIN}"
-              else
-                url "https://github.com/jtprogru/jlic/releases/download/v${VERSION}/jlic-v${VERSION}-x86_64-apple-darwin.tar.gz"
-                sha256 "${SHA_X86_64_DARWIN}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-                url "https://github.com/jtprogru/jlic/releases/download/v${VERSION}/jlic-v${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
-                sha256 "${SHA_AARCH64_LINUX}"
-              else
-                url "https://github.com/jtprogru/jlic/releases/download/v${VERSION}/jlic-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-                sha256 "${SHA_X86_64_LINUX}"
-              end
-            end
-
-            def install
-              bin.install "jlic"
-              man1.install "man/jlic.1" if File.exist?("man/jlic.1")
-              if File.directory?("completions")
-                bash_completion.install "completions/jlic.bash" => "jlic"
-                zsh_completion.install "completions/jlic.zsh" => "_jlic"
-                fish_completion.install "completions/jlic.fish"
-              end
-            end
-
-            test do
-              system "#{bin}/jlic", "--version"
-              system "#{bin}/jlic", "mit", "--stdout", "--name", "Test"
-            end
-          end
-          EOF
+          envsubst < jlic/.github/templates/jlic.rb.tpl > homebrew-tap/Formula/jlic.rb
+          cat homebrew-tap/Formula/jlic.rb
 
       - name: commit & push
         working-directory: homebrew-tap
@@ -292,9 +283,11 @@ jobs:
     name: crates.io
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       - name: publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
