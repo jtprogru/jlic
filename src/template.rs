@@ -8,7 +8,7 @@
 use crate::context::Context;
 use crate::error::{Error, Result};
 
-const OPEN: &str = "{{";
+pub(crate) const OPEN: &str = "{{";
 const CLOSE: &str = "}}";
 
 /// Substitutes context values into a template.
