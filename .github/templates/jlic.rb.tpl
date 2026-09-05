@@ -6,7 +6,6 @@
 class Jlic < Formula
   desc "Generate LICENSE files for open source projects"
   homepage "https://github.com/jtprogru/jlic"
-  version "${VERSION}"
   license "MIT"
 
   on_macos do
